@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4f3f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Ausgaben">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+<title>Ausgaben – Eintragen</title>
+</head>
+<body>
+<header class="top">
+  <h1>Eintragen</h1>
+  <div class="sync-badge" id="sync"></div>
+</header>
+
+<main>
+  <form class="card" id="form" autocomplete="off">
+    <div class="amount-row">
+      <input id="amount" inputmode="decimal" placeholder="0,00" aria-label="Betrag in Euro" enterkeyhint="done">
+      <span class="cur">€</span>
+    </div>
+
+    <div class="chips" id="chips" role="group" aria-label="Kategorie"></div>
+
+    <div class="field">
+      <label for="label">Notiz (z. B. rewe, Döner, Tanken)</label>
+      <input id="label" list="labels" maxlength="60" enterkeyhint="done">
+      <datalist id="labels"></datalist>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label for="date">Datum</label>
+        <input id="date" type="date">
+      </div>
+      <div class="field" id="rlwrap">
+        <label>&nbsp;</label>
+        <label class="toggle" style="margin-top:6px"><input type="checkbox" id="rl"> aus Rücklage bezahlt</label>
+      </div>
+    </div>
+
+    <button class="btn primary" id="save" type="submit">Speichern</button>
+    <div class="btn-row" id="editbar" hidden>
+      <button class="btn small" type="button" id="cancel">Abbrechen</button>
+      <button class="btn small danger" type="button" id="del">Löschen</button>
+    </div>
+  </form>
+
+  <section class="card">
+    <h2 id="listhead">Diesen Monat</h2>
+    <div id="totals" class="small muted" style="margin:-4px 0 6px"></div>
+    <div id="list"></div>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <a href="index.html" aria-current="page">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+    Eintragen
+  </a>
+  <a href="dashboard.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    Übersicht
+  </a>
+</nav>
+
+<script src="app.js"></script>
+<script>
+(function () {
+  const { CATS, CAT, el, eur, parseAmount, todayISO, monthOf, monthLabel } = App;
+  const $ = s => document.querySelector(s);
+  const amount = $('#amount'), label = $('#label'), date = $('#date'), rl = $('#rl');
+  let cat = 'kochen', editing = null;
+
+  App.mountSyncBadge($('#sync'));
+
+  // Kategorie-Chips
+  const chips = $('#chips');
+  CATS.forEach(c => chips.append(el('button', {
+    type: 'button', class: 'chip', 'data-cat': c.id, 'aria-pressed': c.id === cat ? 'true' : 'false',
+    onclick: () => setCat(c.id)
+  }, el('span', { class: 'sw', style: `background:${c.color}` }), c.name)));
+  function setCat(id) {
+    cat = id;
+    chips.querySelectorAll('.chip').forEach(b => b.setAttribute('aria-pressed', b.dataset.cat === id ? 'true' : 'false'));
+    $('#rlwrap').style.visibility = CAT[id].rl ? 'visible' : 'hidden';
+    if (!CAT[id].rl) rl.checked = false;
+    const dl = $('#labels'); dl.replaceChildren(...App.labelsFor(id).map(v => el('option', { value: v })));
+  }
+
+  function reset() {
+    editing = null;
+    amount.value = ''; label.value = ''; rl.checked = false; date.value = todayISO();
+    $('#save').textContent = 'Speichern'; $('#editbar').hidden = true;
+  }
+
+  $('#form').addEventListener('submit', ev => {
+    ev.preventDefault();
+    const v = parseAmount(amount.value);
+    if (!(v > 0)) { amount.focus(); App.toast('Bitte einen Betrag eingeben'); return; }
+    const entry = { cat, amount: v, label: label.value.trim(), date: date.value || todayISO(), rl: CAT[cat].rl && rl.checked };
+    if (editing) entry.id = editing;
+    App.upsert(entry);
+    App.toast(`${editing ? 'Geändert' : 'Gespeichert'}: ${eur(v)} · ${CAT[cat].name}`);
+    reset();
+    amount.focus();
+  });
+  $('#cancel').onclick = reset;
+  $('#del').onclick = () => {
+    if (editing && confirm('Eintrag löschen?')) { App.remove(editing); App.toast('Gelöscht'); reset(); }
+  };
+
+  function edit(e) {
+    editing = e.id;
+    amount.value = String(e.amount).replace('.', ',');
+    label.value = e.label || ''; date.value = e.date; setCat(e.cat); rl.checked = !!e.rl;
+    $('#save').textContent = 'Änderung speichern'; $('#editbar').hidden = false;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function render() {
+    const ym = monthOf(todayISO());
+    const s = App.summary(ym);
+    $('#listhead').textContent = monthLabel(ym);
+    $('#totals').textContent = `${s.list.length} Einträge · Ausgaben ${eur(s.variabelReal)} · Einnahmen ${eur(s.einnahmen)}`;
+    const list = $('#list');
+    if (!s.list.length) { list.replaceChildren(el('div', { class: 'empty' }, 'Noch keine Einträge in diesem Monat.')); return; }
+    const byDay = new Map();
+    s.list.forEach(e => { if (!byDay.has(e.date)) byDay.set(e.date, []); byDay.get(e.date).push(e); });
+    const frag = [];
+    for (const [d, items] of byDay) {
+      const dt = new Date(d + 'T12:00');
+      const out = items.filter(i => !CAT[i.cat].income).reduce((a, i) => a + i.amount, 0);
+      frag.push(el('div', { class: 'day' },
+        el('div', { class: 'day-head' },
+          el('span', {}, dt.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })),
+          el('span', {}, out ? eur(out) : '')),
+        items.map(e => el('div', { class: 'entry', tabindex: '0', onclick: () => edit(e), onkeydown: k => { if (k.key === 'Enter') edit(e); } },
+          el('span', { class: 'sw', style: `background:${CAT[e.cat].color}` }),
+          el('div', { class: 'lbl' },
+            el('b', {}, e.label || CAT[e.cat].name),
+            el('span', {}, CAT[e.cat].name, e.rl ? el('span', { class: 'tag' }, 'Rücklage') : null)),
+          el('span', { class: 'amt' + (CAT[e.cat].income ? ' inc' : '') }, (CAT[e.cat].income ? '+' : '') + eur(e.amount))
+        ))));
+    }
+    list.replaceChildren(...frag);
+  }
+
+  App.onChange(render);
+  setCat(cat); reset(); render();
+})();
+</script>
+</body>
+</html>
